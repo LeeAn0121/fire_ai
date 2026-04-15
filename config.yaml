@@ -1,0 +1,55 @@
+data:
+  train_images: data/merged/train/images
+  train_labels: data/merged/train/labels
+  val_images: data/merged/val/images
+  val_labels: data/merged/val/labels
+  val_split: 0.2
+  yaml: data/merged/data.yaml
+
+detect:
+  conf: 0.45             # 0.25 -> 0.45 (오탐 방지)
+  device: 0              # GPU 번호
+  imgsz: 640             # 추론 해상도
+  iou: 0.45              # NMS 임계값
+  output: output         # 결과 저장 폴더
+  save_conf: true
+  save_txt: false
+  source: input          # 입력 감시 폴더
+  vid_stride: 2          # 비디오 프레임 건너뛰기
+  person_filter: true    # 사람 오탐 방지 필터 활성화
+  person_model: yolo11n.pt 
+  overlap_threshold: 0.7 # 겹침 임계값
+
+model:
+  base: yolo11m.pt       # 학습 시작 베이스 모델
+  output_dir: model/release 
+  path: model/release/result_v5.pt
+
+pipeline:
+  auto_detect: true      # 새 파일 감지 시 자동 탐지
+  min_new_images: 50     # 재학습을 위한 최소 누적 이미지 수
+  poll_interval: 2       # 감시 주기 (초)
+  retrain_on_new_data: true # 새 데이터 누적 시 자동 재학습 활성화
+  watch_dir: input       # 감시할 메인 디렉토리
+
+train:
+  amp: true              # 혼합 정밀도 학습 (속도 향상)
+  batch: -1              # auto-batch: GPU 메모리 한도 내 최대 배치 자동 탐색 (GPU 활용률 극대화)
+  cache: disk            # train 이미지 42.5GB RAM 필요 → RAM 부족으로 disk 캐시 사용
+  device: 0
+  epochs: 50
+  exist_ok: true
+  imgsz: 640
+  rect: true             # 패딩 제거로 학습 속도 대폭 향상
+  close_mosaic: 5        # 마지막 5에폭은 증강 끄기
+  multi_scale: false
+  mosaic: 1.0
+  scale: 0.5
+  name: fire_train
+  patience: 30
+  cos_lr: true           # 코사인 스케줄러
+  project: runs/detect
+  workers: 2             # Windows spawn 방식, 4는 MemoryError 발생 확인
+  plots: false           # RAM 절약을 위해 차트 생성 비활성화
+  val: true              # 검증 활성화 (best.pt 선택 기준)
+  max_det: 50            # 메모리 절약을 위한 최대 검출 수 제한

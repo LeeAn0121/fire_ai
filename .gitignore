@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# 가상환경
+.venv/
+venv/
+env/
+
+# 모델 파일 (용량 큰 바이너리)
+*.pt
+*.onnx
+*.tflite
+*.engine
+*.pb
+model/release/
+model/best_saved_model/
+
+# 데이터셋 (용량 큰 이미지)
+data/
+*.npy
+
+# 학습 결과 / 로그
+runs/
+logs/
+
+# 입출력 폴더
+input/
+output/
+analysis/
+
+# 캐시
+*.cache
+ultralytics_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Claude Code
+.claude/
+
+# 디버그 파일
+torch_debug.txt
+debug_*.py
