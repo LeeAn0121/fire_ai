@@ -9,7 +9,8 @@ import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 os.environ['OMP_NUM_THREADS'] = '1'
 os.environ['CUDA_MODULE_LOADING'] = 'LAZY'
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+# expandable_segments: RTX 5060 Ti(Blackwell)에서 미지원 → 비활성화
+# os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
 import shutil, random, yaml
 from pathlib import Path

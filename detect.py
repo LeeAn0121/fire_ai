@@ -11,6 +11,8 @@ import time
 import yaml
 import cv2
 import re
+import sys
+import logging
 from pathlib import Path
 from collections import deque
 from dataclasses import dataclass, field
@@ -18,15 +20,36 @@ from datetime import datetime
 from ultralytics import YOLO
 
 BASE_DIR   = Path(__file__).parent
+
+# ── 로그 설정 ────────────────────────────────────────────────────────
+def setup_logging():
+    log_dir = BASE_DIR / "logs"
+    log_dir.mkdir(exist_ok=True)
+    
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    log_file = log_dir / f"{timestamp}.log"
+    
+    # 터미널과 파일에 동시 출력
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(message)s',
+        handlers=[
+            logging.FileHandler(log_file, encoding='utf-8'),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+    return log_file
+
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".wmv"}
 
 # ── 알람 파라미터 ─────────────────────────────────────────────────────
 TIME_WINDOW        = 10.0   # 슬라이딩 윈도우 (초)
-ALARM_ON_THRESH    = 0.70   # 내부누적 ≥ 이 값 → 알람 ON  (0~1)
-ALARM_OFF_THRESH   = 0.40   # 내부누적 < 이 값 → 알람 OFF (0~1)
-DECAY_FACTOR       = 0.95   # 미탐감쇠 프레임당 감쇠 계수
-DISPLAY_EMA_ALPHA  = 0.50   # 표시비율 지수이동평균 계수
+ALARM_ON_THRESH    = 0.30   # 0.70 -> 0.30 (감지 기준 완화로 미탐 방지)
+ALARM_OFF_THRESH   = 0.15   # 0.40 -> 0.15
+DECAY_FACTOR       = 0.98   # 0.95 -> 0.98 (미탐 시 알람 유지력 강화)
+DISPLAY_EMA_ALPHA  = 0.50   
+SOFT_RESET_THRESH  = 30.0   # 10s -> 30s (CPU 지연 대응)
 
 _TS_RE = re.compile(r"(\d{17})")  # YYYYMMDDHHMMSSMMM
 
@@ -114,10 +137,10 @@ class AlarmManager:
         penalty = "없음"
 
         # ── 1. Soft Reset ────────────────────────────────────────────
-        if st.last_ts is not None and (ts - st.last_ts) > TIME_WINDOW:
+        if st.last_ts is not None and (ts - st.last_ts) > SOFT_RESET_THRESH:
             print(
                 f"[DEBUG] 알람리셋(Soft) | camera_id={camera_id}"
-                f" | time_window({int(TIME_WINDOW)}s) 이탈로 인한 알람/히스토리 연속성 단절"
+                f" | thresh({int(SOFT_RESET_THRESH)}s) 이탈로 인한 알람/히스토리 연속성 단절"
             )
             st.history.clear()
             st.alarm_on       = False
@@ -328,6 +351,7 @@ class Detector:
 
         print(f"[감지기] 영상 처리 중: {vid_path.name} ({total_frames}프레임, stride={stride})")
 
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -336,6 +360,9 @@ class Detector:
             if frame_idx % stride != 0:
                 frame_idx += 1
                 continue
+
+            # 비디오 프레임 기반 타임스탬프 계산 (CPU 속도 영향 무시)
+            ts = frame_idx / fps
 
             results = self.model.predict(
                 source=frame,
@@ -354,12 +381,15 @@ class Detector:
             max_conf   = max((float(b.conf) for b in r.boxes), default=0.0)
             person_sup = self._check_person_suppression(r.orig_img, fire_boxes)
 
-            ts = time.time()
             alarm_on, penalty, display_ratio, internal_accum = alarm_manager.process(
                 camera_id, ts, fire_count, max_conf, person_sup
             )
 
+            # 프레임별 실시간 출력 추가 (최대 확신도 포함)
             label = "fire" if fire_count > 0 else "no_detection"
+            status_text = "FIRE DETECT" if fire_count > 0 else "no detection"
+            logging.info(f"[감지기] {frame_name} / {status_text} / fire {fire_count}개 / max_conf:{max_conf:.2f}")
+
             out_dir = base_out_dir / label / vid_path.stem
             out_dir.mkdir(parents=True, exist_ok=True)
             cv2.imwrite(str(out_dir / frame_name), plotted)
@@ -465,13 +495,50 @@ def run(cfg=None):
 # ── 단독 실행 ─────────────────────────────────────────────────────────
 
 def main():
-    cfg      = load_config()
+    log_file = setup_logging()
+    
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--weights", type=str, default=None, help="모델 경로 (예: model/release/result_v7.pt)")
+    parser.add_argument("--source",  type=str, default=None, help="입력 폴더 경로")
+    parser.add_argument("--conf",    type=float, default=None, help="신뢰도 임계값")
+    parser.add_argument("--device",  type=str, default=None, help="장치 (0, 1, 'cpu')")
+    parser.add_argument("--name",    type=str, default=None, help="결과 저장 이름")
+    args = parser.parse_args()
+
+    logging.info(f"로그 시작: {log_file}")
+    cfg = load_config()
+
+    # 명령줄 인자로 config 값 덮어쓰기
+    if args.weights:
+        cfg["model"]["path"] = args.weights
+    if args.source:
+        cfg["detect"]["source"] = args.source
+    if args.conf is not None:
+        cfg["detect"]["conf"] = args.conf
+    if args.device is not None:
+        # 숫자인 경우 int로 변환 (GPU 번호)
+        if args.device.isdigit():
+            cfg["detect"]["device"] = int(args.device)
+        else:
+            cfg["detect"]["device"] = args.device
+    if args.name:
+        cfg["detect"]["output_name"] = args.name  # Detector 내부에서 사용할 이름 저장
+
     detector = Detector(cfg)
 
-    while True:
-        detector.check_model_update()
-        detector.run_on_folder()
-        time.sleep(cfg["pipeline"]["poll_interval"])
+    # 단발성 실행인지, 루프 모드인지 결정
+    # source가 명시적으로 들어온 경우 한 번만 실행하고 종료
+    if args.source:
+        print(f"[감지기] 단일 경로 탐지 모드 시작: {args.source}")
+        detector.run_on_folder(args.source)
+        print("[감지기] 탐지 완료.")
+    else:
+        print("[감지기] 실시간 감시 모드 시작 (poll_interval)...")
+        while True:
+            detector.check_model_update()
+            detector.run_on_folder()
+            time.sleep(cfg["pipeline"]["poll_interval"])
 
 
 if __name__ == "__main__":
