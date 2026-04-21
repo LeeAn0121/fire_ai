@@ -34,12 +34,12 @@ pipeline:
 
 train:
   amp: true
-  batch: -1
+  batch: 2
   cache: disk
   device: 0
   epochs: 50
   exist_ok: true
-  imgsz: 1024            # 학습 해상도도 함께 상향
+  imgsz: 896             # 1024는 VRAM 사용량이 커서 한 단계 낮춤
   rect: false
   close_mosaic: 5
   multi_scale: false
@@ -52,7 +52,7 @@ train:
   patience: 30
   cos_lr: true
   project: runs/detect
-  workers: 2
+  workers: 0
   plots: false
   val: true
   max_det: 50

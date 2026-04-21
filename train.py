@@ -111,7 +111,8 @@ def train(cfg=None, base_model_override=None):
 
     # 3. 학습 실행 (최적화 설정 적용)
     print(f"[학습] 학습 시작 (에폭: {tcfg['epochs']}, 배치: {tcfg['batch']})")
-    results = base_model.train(
+
+    train_kwargs = dict(
         data=str(BASE_DIR / cfg["data"]["yaml"]),
         epochs=tcfg["epochs"],
         batch=tcfg["batch"],
@@ -134,6 +135,36 @@ def train(cfg=None, base_model_override=None):
         max_det=tcfg.get("max_det", 300),
         plots=tcfg.get("plots", False),
     )
+
+    while True:
+        try:
+            results = base_model.train(**train_kwargs)
+            break
+        except RuntimeError as e:
+            error_text = str(e)
+            if "DataLoader worker" in error_text and train_kwargs["workers"] > 0:
+                print(
+                    f"[학습] DataLoader worker 비정상 종료 감지 -> "
+                    f"workers={train_kwargs['workers']}에서 workers=0으로 재시도합니다."
+                )
+                train_kwargs["workers"] = 0
+                continue
+
+            oom_signals = ("out of memory", "cuda error: out of memory", "cuda out of memory")
+            if any(signal in error_text.lower() for signal in oom_signals) and train_kwargs["batch"] > 1:
+                next_batch = max(1, train_kwargs["batch"] // 2)
+                if next_batch == train_kwargs["batch"]:
+                    raise
+                print(
+                    f"[학습] 메모리 부족 감지 -> "
+                    f"batch={train_kwargs['batch']}에서 batch={next_batch}로 재시도합니다."
+                )
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                train_kwargs["batch"] = next_batch
+                continue
+
+            raise
 
     # 4. 결과 저장 및 버전 관리
     best_weights = Path(results.save_dir) / "weights" / "best.pt"
